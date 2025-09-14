@@ -1,7 +1,17 @@
 # Small Image Tool
 
 
-I like simple programs, that do one thing only and are easy to use. Even better if you don't have to install anything. Also modern Browsers are pretty powerful. So here is a simple one-file web app for removing image backgrounds, cropping, and erasing — runs entirely in your browser, no installation required.
+I like simple programs that do one thing well and are easy to use. Even better if you don’t have to install anything. Modern browsers are pretty powerful, so here is a **simple one-file web app** for removing single-color image backgrounds, cropping, and erasing.  
+
+It runs entirely in your browser — **no installation required**.  
+
+The main idea is to quickly delete white (or any other solid-color) backgrounds from pictures or plots you want to use in PowerPoint, documents, or elsewhere. You can also crop them or cut out parts of it.
+
+Even better: you can use it **directly online**, since GitHub lets me host static websites:  
+👉 [Try the Small Image Tool here](https://berger-lukas.github.io/Small-Image-Tool/)
+
+
+You can also use it locally of course:
 
 ## How to Use
 
