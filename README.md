@@ -5,7 +5,7 @@ I like simple programs, that do one thing only and are easy to use. Even better 
 
 ## How to Use
 
-1. **Download** the HTML file from this repository (e.g. `Small_Image_Tool.html`).
+1. **Download** the HTML file from this repository (`index.html`).
 2. **Double-click** it — it will open in your default browser (Chrome, Firefox, Safari, Edge).
    - No setup, no Node.js, no Python. Just one file.
 3. **Upload an image** with the file selector.
