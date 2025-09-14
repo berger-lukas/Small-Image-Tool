@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Tool — Dark (Color Preview + Reliable Undo)</title>
+  <style>
+    :root {
+      --bg: #0b0f16;
+      --panel: #0f1724;
+      --panel-2: #111a2b;
+      --text: #e5e7eb;
+      --muted: #9aa3b2;
+      --ring: #1f2a3d;
+      --accent: #60a5fa;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; background: radial-gradient(1200px 800px at 20% -10%, #0e1626 0%, #0b0f16 60%); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    h1 { margin: 0 0 16px 0; font-size: 22px; font-weight: 800; letter-spacing: .2px; }
+    .grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; } @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--ring); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3); padding: 16px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .btn { appearance: none; border: 1px solid var(--ring); background: #0c1422; color: var(--text); padding: 8px 12px; border-radius: 12px; cursor: pointer; font-weight: 700; }
+    .btn:hover { border-color: #3b4a64; }
+    .btn[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn-accent { border-color: #233049; background: #0f1a2d; }
+    .btn-danger { border-color: #3a1f21; background: #1a0f10; color: #fecaca; }
+    .slab { display:grid; gap: 8px; margin-top: 12px; }
+    label { font-size: 13px; color: var(--muted); }
+    input[type="range"], input[type="color"], input[type="file"] { width: 100%; background: transparent; color-scheme: dark; }
+    .value { font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    .checkerboard { background-image: linear-gradient(45deg, #101726 25%, transparent 25%), linear-gradient(-45deg, #101726 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #101726 75%), linear-gradient(-45deg, transparent 75%, #101726 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; border-radius: 16px; border: 1px solid var(--ring); overflow: hidden; min-height: 240px; display: grid; place-items: center; position: relative; }
+    canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; }
+    .overlay { position: absolute; inset: 0; pointer-events: none; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .kbd { padding: 2px 6px; border: 1px solid var(--ring); border-bottom-width: 3px; border-radius: 6px; font-size: 11px; color: var(--text); }
+  </style>
+</head>
+<body>
+  <h1>Image Tool</h1>
+  <div class="grid">
+    <div class="card">
+      <div class="toolbar" role="toolbar" aria-label="Tools">
+        <button class="btn" id="toolColor" aria-pressed="true">Color Remover</button>
+        <button class="btn" id="toolErase" aria-pressed="false">Brush Erase</button>
+        <button class="btn" id="toolRestore" aria-pressed="false">Brush Restore</button>
+        <button class="btn" id="toolCrop" aria-pressed="false">Crop</button>
+        <button class="btn" id="toolDeleteRect" aria-pressed="false">Delete Rect</button>
+        <button class="btn btn-danger" id="btnReset">Reset</button>
+        <button class="btn" id="btnUndo" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button>
+        <button class="btn" id="btnRedo" disabled title="Redo (Shift+Ctrl/Cmd+Z)">Redo</button>
+        <button class="btn btn-accent" id="btnDownload" disabled>Download PNG</button>
+      </div>
+
+      <div class="checkerboard">
+        <canvas id="canvas"></canvas>
+        <div id="placeholder" class="hint">No image yet — choose a file on the right.</div>
+        <svg class="overlay" id="overlay"></svg>
+      </div>
+
+      <div class="hint">
+        Color removal is non‑destructive until <b>Apply</b>. Hold <span class="kbd">Space</span> to temporarily toggle Erase/Restore while brushing.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="slab">
+        <div>
+          <label for="file">Upload image</label>
+          <input type="file" id="file" accept="image/*" />
+        </div>
+
+        <!-- Color panel -->
+        <div id="panelColor">
+          <label for="colorPicker">Target color</label>
+          <div class="row">
+            <input type="color" id="colorPicker" value="#ffffff" />
+            <span id="colorHex" class="value">#FFFFFF</span>
+          </div>
+          <label for="threshold">Threshold</label>
+          <div class="row">
+            <input type="range" id="threshold" min="0" max="150" value="60" />
+            <span id="thresholdVal" class="value">60</span>
+          </div>
+          <label for="feather">Feather</label>
+          <div class="row">
+            <input type="range" id="feather" min="0" max="150" value="40" />
+            <span id="featherVal" class="value">40</span>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnPreview" disabled>Preview</button>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-accent" id="btnApply" disabled>Apply</button>
+              <button class="btn btn-danger" id="btnCancel" disabled>Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Brush panel -->
+        <div id="panelBrush" style="display:none">
+          <label for="brushSize">Brush size</label>
+          <div class="row">
+            <input type="range" id="brushSize" min="3" max="200" value="40" />
+            <span id="brushVal" class="value">40 px</span>
+          </div>
+          <div class="hint">Erase makes pixels transparent; Restore brings back pixels from the current committed state.</div>
+        </div>
+
+        <!-- Crop panel -->
+        <div id="panelCrop" style="display:none">
+          <div class="row">
+            <button class="btn" id="btnApplyCrop" disabled>Apply Crop</button>
+          </div>
+          <div class="hint">Drag on the image to create/adjust the crop rectangle.</div>
+        </div>
+
+        <!-- Delete rectangle panel -->
+        <div id="panelDeleteRect" style="display:none">
+          <div class="row">
+            <button class="btn btn-danger" id="btnApplyDelete" disabled>Delete Selection</button>
+          </div>
+          <div class="hint">Drag on the image to select a rectangle, then delete it (sets alpha=0).</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      // DOM
+      const fileInput = document.getElementById('file');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const overlay = document.getElementById('overlay');
+      const placeholder = document.getElementById('placeholder');
+      const btnDownload = document.getElementById('btnDownload');
+      const btnReset = document.getElementById('btnReset');
+      const btnUndo = document.getElementById('btnUndo');
+      const btnRedo = document.getElementById('btnRedo');
+
+      // Tools & panels
+      const toolColor = document.getElementById('toolColor');
+      const toolErase = document.getElementById('toolErase');
+      const toolRestore = document.getElementById('toolRestore');
+      const toolCrop = document.getElementById('toolCrop');
+      const toolDeleteRect = document.getElementById('toolDeleteRect');
+      const panelColor = document.getElementById('panelColor');
+      const panelBrush = document.getElementById('panelBrush');
+      const panelCrop  = document.getElementById('panelCrop');
+      const panelDeleteRect = document.getElementById('panelDeleteRect');
+      const btnApplyCrop = document.getElementById('btnApplyCrop');
+      const btnApplyDelete = document.getElementById('btnApplyDelete');
+
+      // Color panel
+      const colorPicker = document.getElementById('colorPicker');
+      const colorHex = document.getElementById('colorHex');
+      const thresholdInput = document.getElementById('threshold');
+      const featherInput = document.getElementById('feather');
+      const thresholdVal = document.getElementById('thresholdVal');
+      const featherVal = document.getElementById('featherVal');
+      const btnPreview = document.getElementById('btnPreview');
+      const btnApply = document.getElementById('btnApply');
+      const btnCancel = document.getElementById('btnCancel');
+
+      // Brush controls
+      const brushSizeInput = document.getElementById('brushSize');
+      const brushVal = document.getElementById('brushVal');
+
+      // State
+      let img = null;
+      let srcURL = null;
+      let baselineBuffer = null;
+      let targetColor = [255,255,255];
+      let threshold = 60;
+      let feather = 40;
+      let tool = 'color';
+      let isMouseDown = false;
+      let spaceHeld = false;
+
+      // Selection state in CSS pixels
+      let selRect = null;
+      let draggingSel = false;
+      let selStart = null;
+
+      // Preview
+      let previewActive = false;
+      let lastPreview = null;
+
+      // History
+      const HISTORY_LIMIT = 50; // a bit larger; see note below
+      const history = [];
+      const future = [];
+      function cloneImageData(imgData) {
+        return new ImageData(new Uint8ClampedArray(imgData.data), imgData.width, imgData.height);
+      }
+      function pushHistory() {
+        const snap = ctx.getImageData(0,0,canvas.width,canvas.height);
+        history.push(cloneImageData(snap));
+        if (history.length > HISTORY_LIMIT) history.shift();
+        future.length = 0;
+        updateHistoryButtons();
+      }
+      function undo() {
+        if (history.length === 0) return;
+        const current = ctx.getImageData(0,0,canvas.width,canvas.height);
+        future.push(cloneImageData(current));
+        const prev = history.pop();
+        resizeCanvasIfNeeded(prev.width, prev.height);
+        ctx.putImageData(prev, 0, 0);
+        // keep baseline in sync with the undone state for consistent previews
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        cancelPreview();
+        updateHistoryButtons();
+      }
+      function redo() {
+        if (future.length === 0) return;
+        const current = ctx.getImageData(0,0,canvas.width,canvas.height);
+        history.push(cloneImageData(current));
+        const next = future.pop();
+        resizeCanvasIfNeeded(next.width, next.height);
+        ctx.putImageData(next, 0, 0);
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        cancelPreview();
+        updateHistoryButtons();
+      }
+      function updateHistoryButtons() {
+        btnUndo.disabled = history.length === 0;
+        btnRedo.disabled = future.length === 0;
+      }
+      function resizeCanvasIfNeeded(w, h) {
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      }
+
+      function setTool(next) {
+        tool = next;
+        [toolColor, toolErase, toolRestore, toolCrop, toolDeleteRect].forEach(el=>el.setAttribute('aria-pressed','false'));
+        if (tool==='color') toolColor.setAttribute('aria-pressed','true');
+        if (tool==='erase') toolErase.setAttribute('aria-pressed','true');
+        if (tool==='restore') toolRestore.setAttribute('aria-pressed','true');
+        if (tool==='crop') toolCrop.setAttribute('aria-pressed','true');
+        if (tool==='deleteRect') toolDeleteRect.setAttribute('aria-pressed','true');
+
+        panelColor.style.display = tool==='color' ? '' : 'none';
+        panelBrush.style.display = (tool==='erase' || tool==='restore') ? '' : 'none';
+        panelCrop.style.display = tool==='crop' ? '' : 'none';
+        panelDeleteRect.style.display = tool==='deleteRect' ? '' : 'none';
+
+        if (tool!=='crop' && tool!=='deleteRect') {
+          overlay.innerHTML='';
+          selRect = null;
+          btnApplyCrop.disabled = true;
+          btnApplyDelete.disabled = true;
+        }
+        if (previewActive && tool!=='color') cancelPreview();
+      }
+
+      function enableUI(enabled) {
+        btnDownload.disabled = !enabled;
+        placeholder.style.display = enabled ? 'none' : 'grid';
+        updateHistoryButtons();
+        btnPreview.disabled = !enabled;
+        btnApply.disabled = !previewActive;
+        btnCancel.disabled = !previewActive;
+      }
+
+      function rgbToHex([r,g,b]) {
+        const toHex = (x) => x.toString(16).padStart(2, '0');
+        return ('#' + toHex(r) + toHex(g) + toHex(b)).toUpperCase();
+      }
+      function hexToRgb(hex) {
+        const v = hex.replace('#','');
+        return [parseInt(v.slice(0,2),16), parseInt(v.slice(2,4),16), parseInt(v.slice(4,6),16)];
+      }
+      function distance(r1,g1,b1,r2,g2,b2) {
+        const dr=r1-r2, dg=g1-g2, db=b1-b2; return Math.sqrt(dr*dr + dg*dg + db*db);
+      }
+
+      function drawBaseFromImage() {
+        if (!img) return;
+        canvas.width = img.width; canvas.height = img.height;
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img, 0, 0);
+      }
+
+      function drawFromBaseline() {
+        if (!baselineBuffer) return;
+        resizeCanvasIfNeeded(baselineBuffer.width, baselineBuffer.height);
+        ctx.putImageData(baselineBuffer, 0, 0);
+      }
+
+      function startPreview() {
+        if (!baselineBuffer) return;
+        previewActive = true;
+        btnApply.disabled = false; btnCancel.disabled = false;
+      }
+      function cancelPreview() {
+        if (!previewActive) return;
+        drawFromBaseline();
+        previewActive = false; lastPreview = null;
+        btnApply.disabled = true; btnCancel.disabled = true;
+      }
+      function renderColorPreview() {
+        if (!baselineBuffer) return;
+        const w = baselineBuffer.width, h = baselineBuffer.height;
+        const src = cloneImageData(baselineBuffer);
+        const data = src.data; const [tr,tg,tb]=targetColor; const t=threshold, f=feather;
+        for (let i=0; i<data.length; i+=4) {
+          const r=data[i], g=data[i+1], b=data[i+2], a=data[i+3];
+          const d = distance(r,g,b,tr,tg,tb);
+          if (d <= t) data[i+3] = 0;
+          else if (d <= t + f && f>0) data[i+3] = Math.round(a * ((d - t)/f));
+        }
+        lastPreview = src;
+        resizeCanvasIfNeeded(w,h);
+        ctx.putImageData(src, 0, 0);
+      }
+      function applyPreview() {
+        if (!previewActive || !lastPreview) return;
+        // Ensure undo can revert this commit
+        pushHistory();
+        ctx.putImageData(lastPreview, 0, 0);
+        // Update baseline so subsequent previews build from the committed state
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        previewActive = false; lastPreview = null;
+        btnApply.disabled = true; btnCancel.disabled = true;
+      }
+
+      function applyBrush(x, y, mode) {
+        if (previewActive) cancelPreview();
+        const r = Math.max(3, parseInt(brushSizeInput.value,10) || 20) / 2;
+        const w = canvas.width, h = canvas.height;
+        const minX = Math.max(0, Math.floor(x - r)), minY = Math.max(0, Math.floor(y - r));
+        const sizeW = Math.min(Math.ceil(r*2), w-minX), sizeH = Math.min(Math.ceil(r*2), h-minY);
+        if (sizeW<=0 || sizeH<=0) return;
+        const region = ctx.getImageData(minX, minY, sizeW, sizeH);
+        const data = region.data;
+        let srcData = null;
+        if (mode==='restore' && baselineBuffer) srcData = baselineBuffer.data;
+        for (let j=0; j<region.height; j++) for (let i=0; i<region.width; i++) {
+          const dx = i + minX - x + 0.5, dy = j + minY - y + 0.5;
+          if (dx*dx + dy*dy <= r*r) {
+            const idx = (j*region.width + i) * 4;
+            if (mode==='erase') data[idx+3] = 0;
+            else if (mode==='restore' && srcData) {
+              const gx = i + minX, gy = j + minY, gidx = (gy*w + gx) * 4;
+              data[idx] = srcData[gidx]; data[idx+1] = srcData[gidx+1]; data[idx+2] = srcData[gidx+2]; data[idx+3] = srcData[gidx+3];
+            }
+          }
+        }
+        ctx.putImageData(region, minX, minY);
+      }
+
+      function drawSelectionOverlay() {
+        overlay.innerHTML = ''; if (!selRect) return;
+        const {x,y,w,h} = selRect; const svgNS = 'http://www.w3.org/2000/svg';
+        overlay.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
+        overlay.style.pointerEvents = 'none';
+        const rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', w); rect.setAttribute('height', h);
+        rect.setAttribute('fill', 'rgba(96,165,250,0.12)'); rect.setAttribute('stroke', 'rgba(96,165,250,0.9)'); rect.setAttribute('stroke-width', '2');
+        overlay.appendChild(rect);
+      }
+      function clientToCanvas(evt) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+        return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY, rect };
+      }
+      function selectionCssToCanvas(sel) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+        const sx = Math.max(0, Math.round(sel.x * scaleX));
+        const sy = Math.max(0, Math.round(sel.y * scaleY));
+        const sw = Math.min(canvas.width - sx, Math.round(sel.w * scaleX));
+        const sh = Math.min(canvas.height - sy, Math.round(sel.h * scaleY));
+        return { sx, sy, sw, sh };
+      }
+
+      function applyCrop() {
+        if (!selRect) return; if (previewActive) cancelPreview();
+        const { sx, sy, sw, sh } = selectionCssToCanvas(selRect);
+        if (sw <= 0 || sh <= 0) return;
+        pushHistory();
+        const region = ctx.getImageData(sx, sy, sw, sh);
+        canvas.width = sw; canvas.height = sh; ctx.putImageData(region, 0, 0);
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        selRect = null; overlay.innerHTML = ''; btnApplyCrop.disabled = true;
+      }
+      function applyDeleteRect() {
+        if (!selRect) return; if (previewActive) cancelPreview();
+        const { sx, sy, sw, sh } = selectionCssToCanvas(selRect);
+        if (sw <= 0 || sh <= 0) return;
+        pushHistory();
+        const region = ctx.getImageData(sx, sy, sw, sh); const data = region.data;
+        for (let i=3; i<data.length; i+=4) data[i] = 0;
+        ctx.putImageData(region, sx, sy);
+        selRect = null; overlay.innerHTML = ''; btnApplyDelete.disabled = true;
+      }
+
+      // Events
+      fileInput.addEventListener('change', (e)=>{
+        const file = e.target.files && e.target.files[0]; if (!file) return;
+        try { if (srcURL) URL.revokeObjectURL(srcURL); } catch {}
+        srcURL = URL.createObjectURL(file); img = new Image();
+        img.onload = ()=>{
+          history.length = 0; future.length = 0; updateHistoryButtons();
+          previewActive = false; lastPreview = null;
+          drawBaseFromImage();
+          baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+          enableUI(true);
+        };
+        img.onerror = ()=> alert('Could not load the image.');
+        img.src = srcURL;
+      });
+
+      // Tool buttons
+      toolColor.addEventListener('click', ()=> setTool('color'));
+      toolErase.addEventListener('click', ()=> setTool('erase'));
+      toolRestore.addEventListener('click', ()=> setTool('restore'));
+      toolCrop.addEventListener('click', ()=> setTool('crop'));
+      toolDeleteRect.addEventListener('click', ()=> setTool('deleteRect'));
+
+      btnApplyCrop.addEventListener('click', applyCrop);
+      btnApplyDelete.addEventListener('click', applyDeleteRect);
+
+      // Canvas interactions
+      canvas.addEventListener('mousedown', (e)=>{
+        if (!img) return; isMouseDown = true;
+        const { x, y } = clientToCanvas(e);
+        if (tool==='color') {
+          const pixel = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+          targetColor = [pixel[0], pixel[1], pixel[2]]; colorPicker.value = rgbToHex(targetColor); colorHex.textContent = colorPicker.value;
+          startPreview(); renderColorPreview();
+        } else if (tool==='erase' || tool==='restore') {
+          if (previewActive) cancelPreview();
+          pushHistory(); // snapshot at stroke start
+          applyBrush(x, y, tool==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore');
+        } else if (tool==='crop' || tool==='deleteRect') {
+          if (previewActive) cancelPreview();
+          const rect = canvas.getBoundingClientRect();
+          const cssX = (x / canvas.width) * rect.width;
+          const cssY = (y / canvas.height) * rect.height;
+          draggingSel = true; selStart = { x: cssX, y: cssY }; selRect = { x: cssX, y: cssY, w: 1, h: 1 };
+          drawSelectionOverlay();
+          if (tool==='crop') btnApplyCrop.disabled = false; else btnApplyDelete.disabled = false;
+        }
+      });
+      window.addEventListener('mousemove', (e)=>{
+        if (!img || !isMouseDown) return;
+        const { x, y } = clientToCanvas(e);
+        if (tool==='erase' || tool==='restore') {
+          applyBrush(x, y, tool==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore');
+        } else if ((tool==='crop' || tool==='deleteRect') && draggingSel && selStart) {
+          const rect = canvas.getBoundingClientRect();
+          const cssX = (x / canvas.width) * rect.width;
+          const cssY = (y / canvas.height) * rect.height;
+          const x0 = Math.min(selStart.x, cssX);
+          const y0 = Math.min(selStart.y, cssY);
+          const w = Math.abs(cssX - selStart.x);
+          const h = Math.abs(cssY - selStart.y);
+          selRect = { x: x0, y: y0, w, h }; drawSelectionOverlay();
+        }
+      });
+      window.addEventListener('mouseup', ()=>{ isMouseDown = false; draggingSel = false; });
+
+      // Keyboard
+      window.addEventListener('keydown', (e)=>{
+        if (e.code === 'Space') spaceHeld = true;
+        const mod = (navigator.platform.includes('Mac')) ? e.metaKey : e.ctrlKey;
+        if (mod && !e.shiftKey && e.key.toLowerCase()==='z') { e.preventDefault(); undo(); }
+        if (mod && e.shiftKey && e.key.toLowerCase()==='z') { e.preventDefault(); redo(); }
+      });
+      window.addEventListener('keyup', (e)=>{ if (e.code === 'Space') spaceHeld = false; });
+
+      // Color UI
+      colorPicker.addEventListener('input', (e)=>{ targetColor = hexToRgb(e.target.value); colorHex.textContent = e.target.value.toUpperCase(); if (tool==='color') { startPreview(); renderColorPreview(); } });
+      thresholdInput.addEventListener('input', (e)=>{ threshold = +e.target.value||0; thresholdVal.textContent = String(threshold); if (tool==='color') { startPreview(); renderColorPreview(); } });
+      featherInput.addEventListener('input', (e)=>{ feather = +e.target.value||0; featherVal.textContent = String(feather); if (tool==='color') { startPreview(); renderColorPreview(); } });
+      btnPreview.addEventListener('click', ()=>{ if (tool==='color') { startPreview(); renderColorPreview(); } });
+      btnApply.addEventListener('click', ()=>{ if (tool==='color') { applyPreview(); } });
+      btnCancel.addEventListener('click', ()=>{ if (tool==='color') { cancelPreview(); } });
+
+      // Brush UI
+      brushSizeInput?.addEventListener('input', (e)=>{ brushVal.textContent = e.target.value + ' px'; });
+
+
+      // Button clicks for Undo/Redo
+      btnUndo.addEventListener('click', undo);
+      btnRedo.addEventListener('click', redo);
+
+      // Reset/Download
+      btnReset.addEventListener('click', ()=>{
+        if (!img) return;
+        history.length = 0; future.length = 0; updateHistoryButtons();
+        previewActive = false; lastPreview = null;
+        drawBaseFromImage();
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        overlay.innerHTML = ''; selRect = null; btnApplyCrop.disabled = true; btnApplyDelete.disabled = true;
+      });
+      btnDownload.addEventListener('click', ()=>{ if (!img) return; const a=document.createElement('a'); a.download='edited.png'; a.href=canvas.toDataURL('image/png'); a.click(); });
+
+      // Init
+      setTool('color'); enableUI(false);
+    })();
+  </script>
+</body>
+</html>
