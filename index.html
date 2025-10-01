@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Image Tool — Dark (Color Preview + Reliable Undo)</title>
+  <title>Image Tool — Dark (Color + Rotate + Fixed Crop Overlay + Unified Brush/Delete)</title>
   <style>
     :root {
       --bg: #0b0f16;
@@ -29,14 +29,19 @@
     .btn-danger { border-color: #3a1f21; background: #1a0f10; color: #fecaca; }
     .slab { display:grid; gap: 8px; margin-top: 12px; }
     label { font-size: 13px; color: var(--muted); }
-    input[type="range"], input[type="color"], input[type="file"] { width: 100%; background: transparent; color-scheme: dark; }
+    input[type="range"], input[type="color"], input[type="file"], input[type="number"] { width: 100%; background: transparent; color-scheme: dark; }
     .value { font-variant-numeric: tabular-nums; color: var(--text); font-size: 12px; }
     .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
-    .checkerboard { background-image: linear-gradient(45deg, #101726 25%, transparent 25%), linear-gradient(-45deg, #101726 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #101726 75%), linear-gradient(-45deg, transparent 75%, #101726 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; border-radius: 16px; border: 1px solid var(--ring); overflow: hidden; min-height: 240px; display: grid; place-items: center; position: relative; }
+    .checkerboard { position: relative; background-image: linear-gradient(45deg, #101726 25%, transparent 25%), linear-gradient(-45deg, #101726 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #101726 75%), linear-gradient(-45deg, transparent 75%, #101726 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; border-radius: 16px; border: 1px solid var(--ring); overflow: hidden; min-height: 240px; display: grid; place-items: center; }
     canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; }
-    .overlay { position: absolute; inset: 0; pointer-events: none; }
+    /* Overlay will be positioned/sized to match the canvas box exactly */
+    .overlay { position: absolute; pointer-events: none; }
     .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
     .kbd { padding: 2px 6px; border: 1px solid var(--ring); border-bottom-width: 3px; border-radius: 6px; font-size: 11px; color: var(--text); }
+    .inline-row { display:flex; gap:8px; align-items:center; }
+    .inline-row input[type="number"]{ width:90px; }
+    .seg { display:flex; gap:6px; }
+    .seg .btn { padding:6px 10px; }
   </style>
 </head>
 <body>
@@ -45,24 +50,23 @@
     <div class="card">
       <div class="toolbar" role="toolbar" aria-label="Tools">
         <button class="btn" id="toolColor" aria-pressed="true">Color Remover</button>
-        <button class="btn" id="toolErase" aria-pressed="false">Brush Erase</button>
-        <button class="btn" id="toolRestore" aria-pressed="false">Brush Restore</button>
+        <button class="btn" id="toolBrush" aria-pressed="false">Brush / Delete</button>
         <button class="btn" id="toolCrop" aria-pressed="false">Crop</button>
-        <button class="btn" id="toolDeleteRect" aria-pressed="false">Delete Rect</button>
+        <button class="btn" id="toolRotate" aria-pressed="false">Rotate</button>
         <button class="btn btn-danger" id="btnReset">Reset</button>
         <button class="btn" id="btnUndo" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button>
         <button class="btn" id="btnRedo" disabled title="Redo (Shift+Ctrl/Cmd+Z)">Redo</button>
         <button class="btn btn-accent" id="btnDownload" disabled>Download PNG</button>
       </div>
 
-      <div class="checkerboard">
+      <div class="checkerboard" id="board">
         <canvas id="canvas"></canvas>
         <div id="placeholder" class="hint">No image yet — choose a file on the right.</div>
-        <svg class="overlay" id="overlay"></svg>
+        <svg class="overlay" id="overlay" preserveAspectRatio="none"></svg>
       </div>
 
       <div class="hint">
-        Color removal is non‑destructive until <b>Apply</b>. Hold <span class="kbd">Space</span> to temporarily toggle Erase/Restore while brushing.
+        Color removal & rotation are non-destructive until <b>Apply</b>. Hold <span class="kbd">Space</span> to temporarily toggle Erase/Restore while brushing.
       </div>
     </div>
 
@@ -99,14 +103,30 @@
           </div>
         </div>
 
-        <!-- Brush panel -->
+        <!-- Brush / Delete panel -->
         <div id="panelBrush" style="display:none">
-          <label for="brushSize">Brush size</label>
-          <div class="row">
-            <input type="range" id="brushSize" min="3" max="200" value="40" />
-            <span id="brushVal" class="value">40 px</span>
+          <label>Mode</label>
+          <div class="seg" role="group" aria-label="Brush modes">
+            <button class="btn" id="modeErase"   aria-pressed="true">Erase</button>
+            <button class="btn" id="modeRestore" aria-pressed="false">Restore</button>
+            <button class="btn" id="modeDelete"  aria-pressed="false">Delete Rect</button>
           </div>
-          <div class="hint">Erase makes pixels transparent; Restore brings back pixels from the current committed state.</div>
+
+          <div id="brushControls">
+            <label for="brushSize">Brush size</label>
+            <div class="row">
+              <input type="range" id="brushSize" min="3" max="200" value="40" />
+              <span id="brushVal" class="value">40 px</span>
+            </div>
+            <div class="hint">Erase makes pixels transparent; Restore brings back pixels from the current committed state.</div>
+          </div>
+
+          <div id="deleteControls" style="display:none">
+            <div class="row" style="margin-top:8px;">
+              <button class="btn btn-danger" id="btnApplyDelete" disabled>Delete Selection</button>
+            </div>
+            <div class="hint">Drag on the image to select a rectangle, then delete it (sets alpha=0).</div>
+          </div>
         </div>
 
         <!-- Crop panel -->
@@ -117,13 +137,24 @@
           <div class="hint">Drag on the image to create/adjust the crop rectangle.</div>
         </div>
 
-        <!-- Delete rectangle panel -->
-        <div id="panelDeleteRect" style="display:none">
+        <!-- Rotate panel -->
+        <div id="panelRotate" style="display:none">
+          <label for="rotateRange">Angle</label>
           <div class="row">
-            <button class="btn btn-danger" id="btnApplyDelete" disabled>Delete Selection</button>
+            <input type="range" id="rotateRange" min="0" max="360" step="0.1" value="0" />
+            <span id="rotateVal" class="value">0.0°</span>
           </div>
-          <div class="hint">Drag on the image to select a rectangle, then delete it (sets alpha=0).</div>
+          <div class="inline-row">
+            <input type="number" id="rotateNumber" min="0" max="360" step="0.1" value="0" />
+            <span class="value">deg</span>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button class="btn btn-accent" id="btnApplyRotate" disabled>Apply Rotation</button>
+            <button class="btn btn-danger" id="btnCancelRotate" disabled>Cancel</button>
+          </div>
+          <div class="hint">Live preview rotates around the image center. Applying resizes the canvas to fit.</div>
         </div>
+
       </div>
     </div>
   </div>
@@ -131,6 +162,7 @@
   <script>
     (function(){
       // DOM
+      const board = document.getElementById('board');
       const fileInput = document.getElementById('file');
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -142,17 +174,25 @@
       const btnRedo = document.getElementById('btnRedo');
 
       // Tools & panels
-      const toolColor = document.getElementById('toolColor');
-      const toolErase = document.getElementById('toolErase');
-      const toolRestore = document.getElementById('toolRestore');
-      const toolCrop = document.getElementById('toolCrop');
-      const toolDeleteRect = document.getElementById('toolDeleteRect');
+      const toolColor  = document.getElementById('toolColor');
+      const toolBrush  = document.getElementById('toolBrush');
+      const toolCrop   = document.getElementById('toolCrop');
+      const toolRotate = document.getElementById('toolRotate');
+
       const panelColor = document.getElementById('panelColor');
       const panelBrush = document.getElementById('panelBrush');
       const panelCrop  = document.getElementById('panelCrop');
-      const panelDeleteRect = document.getElementById('panelDeleteRect');
-      const btnApplyCrop = document.getElementById('btnApplyCrop');
+      const panelRotate= document.getElementById('panelRotate');
+
+      const btnApplyCrop   = document.getElementById('btnApplyCrop');
       const btnApplyDelete = document.getElementById('btnApplyDelete');
+
+      // Brush mode buttons
+      const modeErase   = document.getElementById('modeErase');
+      const modeRestore = document.getElementById('modeRestore');
+      const modeDelete  = document.getElementById('modeDelete');
+      const brushControls  = document.getElementById('brushControls');
+      const deleteControls = document.getElementById('deleteControls');
 
       // Color panel
       const colorPicker = document.getElementById('colorPicker');
@@ -169,6 +209,13 @@
       const brushSizeInput = document.getElementById('brushSize');
       const brushVal = document.getElementById('brushVal');
 
+      // Rotate controls
+      const rotateRange = document.getElementById('rotateRange');
+      const rotateNumber = document.getElementById('rotateNumber');
+      const rotateVal = document.getElementById('rotateVal');
+      const btnApplyRotate = document.getElementById('btnApplyRotate');
+      const btnCancelRotate = document.getElementById('btnCancelRotate');
+
       // State
       let img = null;
       let srcURL = null;
@@ -176,11 +223,12 @@
       let targetColor = [255,255,255];
       let threshold = 60;
       let feather = 40;
-      let tool = 'color';
+      let tool = 'color';              // 'color' | 'brush' | 'crop' | 'rotate'
+      let brushMode = 'erase';         // 'erase' | 'restore' | 'deleteRect'
       let isMouseDown = false;
       let spaceHeld = false;
 
-      // Selection state in CSS pixels
+      // Selection state in CSS pixels (overlay-aligned)
       let selRect = null;
       let draggingSel = false;
       let selStart = null;
@@ -190,7 +238,7 @@
       let lastPreview = null;
 
       // History
-      const HISTORY_LIMIT = 50; // a bit larger; see note below
+      const HISTORY_LIMIT = 50;
       const history = [];
       const future = [];
       function cloneImageData(imgData) {
@@ -210,10 +258,10 @@
         const prev = history.pop();
         resizeCanvasIfNeeded(prev.width, prev.height);
         ctx.putImageData(prev, 0, 0);
-        // keep baseline in sync with the undone state for consistent previews
         baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
         cancelPreview();
         updateHistoryButtons();
+        syncOverlayToCanvas();
       }
       function redo() {
         if (future.length === 0) return;
@@ -225,6 +273,7 @@
         baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
         cancelPreview();
         updateHistoryButtons();
+        syncOverlayToCanvas();
       }
       function updateHistoryButtons() {
         btnUndo.disabled = history.length === 0;
@@ -234,27 +283,48 @@
         if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       }
 
+      // ---------- Overlay alignment FIX ----------
+      function updateOverlayBounds() {
+        // position & size overlay to exactly match canvas’s CSS box
+        const boardRect  = board.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
+        const left = canvasRect.left - boardRect.left;
+        const top  = canvasRect.top  - boardRect.top;
+        overlay.style.left   = left + 'px';
+        overlay.style.top    = top + 'px';
+        overlay.style.width  = canvasRect.width + 'px';
+        overlay.style.height = canvasRect.height + 'px';
+        // sync viewBox to overlay’s rendered size
+        const w = Math.max(1, Math.round(canvasRect.width));
+        const h = Math.max(1, Math.round(canvasRect.height));
+        overlay.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      }
+      function syncOverlayToCanvas() {
+        requestAnimationFrame(updateOverlayBounds);
+      }
+      window.addEventListener('resize', syncOverlayToCanvas);
+
       function setTool(next) {
         tool = next;
-        [toolColor, toolErase, toolRestore, toolCrop, toolDeleteRect].forEach(el=>el.setAttribute('aria-pressed','false'));
-        if (tool==='color') toolColor.setAttribute('aria-pressed','true');
-        if (tool==='erase') toolErase.setAttribute('aria-pressed','true');
-        if (tool==='restore') toolRestore.setAttribute('aria-pressed','true');
-        if (tool==='crop') toolCrop.setAttribute('aria-pressed','true');
-        if (tool==='deleteRect') toolDeleteRect.setAttribute('aria-pressed','true');
+        [toolColor, toolBrush, toolCrop, toolRotate].forEach(el=>el.setAttribute('aria-pressed','false'));
+        if (tool==='color')  toolColor.setAttribute('aria-pressed','true');
+        if (tool==='brush')  toolBrush.setAttribute('aria-pressed','true');
+        if (tool==='crop')   toolCrop.setAttribute('aria-pressed','true');
+        if (tool==='rotate') toolRotate.setAttribute('aria-pressed','true');
 
         panelColor.style.display = tool==='color' ? '' : 'none';
-        panelBrush.style.display = (tool==='erase' || tool==='restore') ? '' : 'none';
-        panelCrop.style.display = tool==='crop' ? '' : 'none';
-        panelDeleteRect.style.display = tool==='deleteRect' ? '' : 'none';
+        panelBrush.style.display = tool==='brush' ? '' : 'none';
+        panelCrop.style.display  = tool==='crop'  ? '' : 'none';
+        panelRotate.style.display= tool==='rotate'? '' : 'none';
 
-        if (tool!=='crop' && tool!=='deleteRect') {
+        if (tool!=='crop' && !(tool==='brush' && brushMode==='deleteRect')) {
           overlay.innerHTML='';
           selRect = null;
           btnApplyCrop.disabled = true;
           btnApplyDelete.disabled = true;
         }
-        if (previewActive && tool!=='color') cancelPreview();
+        if (previewActive && tool!=='color' && tool!=='rotate') cancelPreview();
+        syncOverlayToCanvas();
       }
 
       function enableUI(enabled) {
@@ -262,8 +332,13 @@
         placeholder.style.display = enabled ? 'none' : 'grid';
         updateHistoryButtons();
         btnPreview.disabled = !enabled;
+        // Color
         btnApply.disabled = !previewActive;
         btnCancel.disabled = !previewActive;
+        // Rotate
+        btnApplyRotate.disabled = !previewActive;
+        btnCancelRotate.disabled = !previewActive;
+        syncOverlayToCanvas();
       }
 
       function rgbToHex([r,g,b]) {
@@ -283,25 +358,31 @@
         canvas.width = img.width; canvas.height = img.height;
         ctx.clearRect(0,0,canvas.width,canvas.height);
         ctx.drawImage(img, 0, 0);
+        syncOverlayToCanvas();
       }
 
       function drawFromBaseline() {
         if (!baselineBuffer) return;
         resizeCanvasIfNeeded(baselineBuffer.width, baselineBuffer.height);
         ctx.putImageData(baselineBuffer, 0, 0);
+        syncOverlayToCanvas();
       }
 
       function startPreview() {
         if (!baselineBuffer) return;
         previewActive = true;
         btnApply.disabled = false; btnCancel.disabled = false;
+        btnApplyRotate.disabled = false; btnCancelRotate.disabled = false;
       }
       function cancelPreview() {
         if (!previewActive) return;
         drawFromBaseline();
         previewActive = false; lastPreview = null;
         btnApply.disabled = true; btnCancel.disabled = true;
+        btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
       }
+
+      // ----- Color preview/apply -----
       function renderColorPreview() {
         if (!baselineBuffer) return;
         const w = baselineBuffer.width, h = baselineBuffer.height;
@@ -316,16 +397,77 @@
         lastPreview = src;
         resizeCanvasIfNeeded(w,h);
         ctx.putImageData(src, 0, 0);
+        syncOverlayToCanvas();
       }
       function applyPreview() {
         if (!previewActive || !lastPreview) return;
-        // Ensure undo can revert this commit
         pushHistory();
         ctx.putImageData(lastPreview, 0, 0);
-        // Update baseline so subsequent previews build from the committed state
         baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
         previewActive = false; lastPreview = null;
         btnApply.disabled = true; btnCancel.disabled = true;
+        btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
+        syncOverlayToCanvas();
+      }
+
+      // ----- Rotate preview/apply -----
+      function degToRad(deg){ return (deg % 360) * Math.PI / 180; }
+      function rotatedDims(w, h, rad){
+        const cos = Math.abs(Math.cos(rad));
+        const sin = Math.abs(Math.sin(rad));
+        return { w: Math.ceil(w*cos + h*sin), h: Math.ceil(w*sin + h*cos) };
+      }
+      function renderRotatePreview(angleDeg){
+        if (!baselineBuffer) return;
+        const rad = degToRad(angleDeg);
+        const bw = baselineBuffer.width, bh = baselineBuffer.height;
+        const { w: rw, h: rh } = rotatedDims(bw, bh, rad);
+
+        const off = document.createElement('canvas');
+        off.width = rw; off.height = rh;
+        const octx = off.getContext('2d');
+        octx.clearRect(0,0,rw,rh);
+        octx.translate(rw/2, rh/2);
+        octx.rotate(rad);
+        const tmp = document.createElement('canvas');
+        tmp.width = bw; tmp.height = bh;
+        tmp.getContext('2d').putImageData(baselineBuffer, 0, 0);
+        octx.drawImage(tmp, -bw/2, -bh/2);
+
+        resizeCanvasIfNeeded(rw, rh);
+        ctx.clearRect(0,0,rw,rh);
+        ctx.drawImage(off, 0, 0);
+        lastPreview = ctx.getImageData(0,0,rw,rh);
+        syncOverlayToCanvas();
+      }
+      function applyRotate(){
+        if (!previewActive || !lastPreview) return;
+        pushHistory();
+        resizeCanvasIfNeeded(lastPreview.width, lastPreview.height);
+        ctx.putImageData(lastPreview, 0, 0);
+        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
+        previewActive = false; lastPreview = null;
+        btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
+        btnApply.disabled = true; btnCancel.disabled = true;
+        syncOverlayToCanvas();
+      }
+
+      // ----- Brush & Delete -----
+      function setBrushMode(mode){
+        brushMode = mode; // 'erase' | 'restore' | 'deleteRect'
+        [modeErase, modeRestore, modeDelete].forEach(b=>b.setAttribute('aria-pressed','false'));
+        if (mode==='erase')   modeErase.setAttribute('aria-pressed','true');
+        if (mode==='restore') modeRestore.setAttribute('aria-pressed','true');
+        if (mode==='deleteRect') modeDelete.setAttribute('aria-pressed','true');
+
+        const isDelete = mode==='deleteRect';
+        brushControls.style.display = isDelete ? 'none' : '';
+        deleteControls.style.display = isDelete ? '' : 'none';
+
+        if (!isDelete) {
+          overlay.innerHTML=''; selRect=null; btnApplyDelete.disabled=true;
+        }
+        syncOverlayToCanvas();
       }
 
       function applyBrush(x, y, mode) {
@@ -353,11 +495,12 @@
         ctx.putImageData(region, minX, minY);
       }
 
+      // Selection overlay (overlay coords == canvas CSS box)
       function drawSelectionOverlay() {
         overlay.innerHTML = ''; if (!selRect) return;
         const {x,y,w,h} = selRect; const svgNS = 'http://www.w3.org/2000/svg';
-        overlay.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
-        overlay.style.pointerEvents = 'none';
+        const ow = overlay.clientWidth || 1, oh = overlay.clientHeight || 1;
+        overlay.setAttribute('viewBox', `0 0 ${ow} ${oh}`);
         const rect = document.createElementNS(svgNS, 'rect');
         rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', w); rect.setAttribute('height', h);
         rect.setAttribute('fill', 'rgba(96,165,250,0.12)'); rect.setAttribute('stroke', 'rgba(96,165,250,0.9)'); rect.setAttribute('stroke-width', '2');
@@ -369,6 +512,7 @@
         return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY, rect };
       }
       function selectionCssToCanvas(sel) {
+        // Convert overlay/CSS rect -> canvas pixels
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
         const sx = Math.max(0, Math.round(sel.x * scaleX));
@@ -378,6 +522,7 @@
         return { sx, sy, sw, sh };
       }
 
+      // ----- Crop/Delete actions -----
       function applyCrop() {
         if (!selRect) return; if (previewActive) cancelPreview();
         const { sx, sy, sw, sh } = selectionCssToCanvas(selRect);
@@ -387,6 +532,7 @@
         canvas.width = sw; canvas.height = sh; ctx.putImageData(region, 0, 0);
         baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
         selRect = null; overlay.innerHTML = ''; btnApplyCrop.disabled = true;
+        syncOverlayToCanvas();
       }
       function applyDeleteRect() {
         if (!selRect) return; if (previewActive) cancelPreview();
@@ -417,13 +563,17 @@
 
       // Tool buttons
       toolColor.addEventListener('click', ()=> setTool('color'));
-      toolErase.addEventListener('click', ()=> setTool('erase'));
-      toolRestore.addEventListener('click', ()=> setTool('restore'));
-      toolCrop.addEventListener('click', ()=> setTool('crop'));
-      toolDeleteRect.addEventListener('click', ()=> setTool('deleteRect'));
+      toolBrush.addEventListener('click', ()=> setTool('brush'));
+      toolCrop.addEventListener('click',  ()=> setTool('crop'));
+      toolRotate.addEventListener('click',()=> setTool('rotate'));
 
       btnApplyCrop.addEventListener('click', applyCrop);
       btnApplyDelete.addEventListener('click', applyDeleteRect);
+
+      // Brush mode buttons
+      modeErase.addEventListener('click',   ()=> setBrushMode('erase'));
+      modeRestore.addEventListener('click', ()=> setBrushMode('restore'));
+      modeDelete.addEventListener('click',  ()=> setBrushMode('deleteRect'));
 
       // Canvas interactions
       canvas.addEventListener('mousedown', (e)=>{
@@ -433,11 +583,12 @@
           const pixel = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
           targetColor = [pixel[0], pixel[1], pixel[2]]; colorPicker.value = rgbToHex(targetColor); colorHex.textContent = colorPicker.value;
           startPreview(); renderColorPreview();
-        } else if (tool==='erase' || tool==='restore') {
+        } else if (tool==='brush' && (brushMode==='erase' || brushMode==='restore')) {
           if (previewActive) cancelPreview();
           pushHistory(); // snapshot at stroke start
-          applyBrush(x, y, tool==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore');
-        } else if (tool==='crop' || tool==='deleteRect') {
+          const mode = brushMode==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore';
+          applyBrush(x, y, mode);
+        } else if ((tool==='crop') || (tool==='brush' && brushMode==='deleteRect')) {
           if (previewActive) cancelPreview();
           const rect = canvas.getBoundingClientRect();
           const cssX = (x / canvas.width) * rect.width;
@@ -450,9 +601,10 @@
       window.addEventListener('mousemove', (e)=>{
         if (!img || !isMouseDown) return;
         const { x, y } = clientToCanvas(e);
-        if (tool==='erase' || tool==='restore') {
-          applyBrush(x, y, tool==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore');
-        } else if ((tool==='crop' || tool==='deleteRect') && draggingSel && selStart) {
+        if (tool==='brush' && (brushMode==='erase' || brushMode==='restore')) {
+          const mode = brushMode==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore';
+          applyBrush(x, y, mode);
+        } else if ((tool==='crop' || (tool==='brush' && brushMode==='deleteRect')) && draggingSel && selStart) {
           const rect = canvas.getBoundingClientRect();
           const cssX = (x / canvas.width) * rect.width;
           const cssY = (y / canvas.height) * rect.height;
@@ -475,18 +627,40 @@
       window.addEventListener('keyup', (e)=>{ if (e.code === 'Space') spaceHeld = false; });
 
       // Color UI
-      colorPicker.addEventListener('input', (e)=>{ targetColor = hexToRgb(e.target.value); colorHex.textContent = e.target.value.toUpperCase(); if (tool==='color') { startPreview(); renderColorPreview(); } });
-      thresholdInput.addEventListener('input', (e)=>{ threshold = +e.target.value||0; thresholdVal.textContent = String(threshold); if (tool==='color') { startPreview(); renderColorPreview(); } });
-      featherInput.addEventListener('input', (e)=>{ feather = +e.target.value||0; featherVal.textContent = String(feather); if (tool==='color') { startPreview(); renderColorPreview(); } });
+      function updateColorPreview(){ if (tool==='color') { startPreview(); renderColorPreview(); } }
+      colorPicker.addEventListener('input', (e)=>{ targetColor = hexToRgb(e.target.value); colorHex.textContent = e.target.value.toUpperCase(); updateColorPreview(); });
+      thresholdInput.addEventListener('input', (e)=>{ threshold = +e.target.value||0; thresholdVal.textContent = String(threshold); updateColorPreview(); });
+      featherInput.addEventListener('input', (e)=>{ feather = +e.target.value||0; featherVal.textContent = String(feather); updateColorPreview(); });
       btnPreview.addEventListener('click', ()=>{ if (tool==='color') { startPreview(); renderColorPreview(); } });
-      btnApply.addEventListener('click', ()=>{ if (tool==='color') { applyPreview(); } });
+      btnApply.addEventListener('click',  ()=>{ if (tool==='color') { applyPreview(); } });
       btnCancel.addEventListener('click', ()=>{ if (tool==='color') { cancelPreview(); } });
 
       // Brush UI
       brushSizeInput?.addEventListener('input', (e)=>{ brushVal.textContent = e.target.value + ' px'; });
 
+      // Rotate UI
+      function syncRotateInputs(val){
+        const clamped = Math.max(0, Math.min(360, Number(val)||0));
+        rotateRange.value = clamped;
+        rotateNumber.value = clamped;
+        rotateVal.textContent = clamped.toFixed(1) + '°';
+      }
+      rotateRange.addEventListener('input', (e)=>{
+        if (!img) return;
+        const v = Number(e.target.value)||0;
+        syncRotateInputs(v);
+        if (tool==='rotate') { startPreview(); renderRotatePreview(v); }
+      });
+      rotateNumber.addEventListener('input', (e)=>{
+        if (!img) return;
+        const v = Number(e.target.value)||0;
+        syncRotateInputs(v);
+        if (tool==='rotate') { startPreview(); renderRotatePreview(v); }
+      });
+      btnApplyRotate.addEventListener('click', ()=>{ if (tool==='rotate') applyRotate(); });
+      btnCancelRotate.addEventListener('click', ()=>{ if (tool==='rotate') cancelPreview(); });
 
-      // Button clicks for Undo/Redo
+      // Undo/Redo buttons
       btnUndo.addEventListener('click', undo);
       btnRedo.addEventListener('click', redo);
 
@@ -498,11 +672,22 @@
         drawBaseFromImage();
         baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
         overlay.innerHTML = ''; selRect = null; btnApplyCrop.disabled = true; btnApplyDelete.disabled = true;
+        syncRotateInputs(0);
+        setBrushMode('erase');
       });
       btnDownload.addEventListener('click', ()=>{ if (!img) return; const a=document.createElement('a'); a.download='edited.png'; a.href=canvas.toDataURL('image/png'); a.click(); });
 
       // Init
-      setTool('color'); enableUI(false);
+      function syncRotateInputs(init){ const v = Number(init)||0; rotateRange.value=v; rotateNumber.value=v; rotateVal.textContent=v.toFixed(1)+'°'; }
+      setBrushMode('erase');
+      setTool('color');
+      enableUI(false);
+      syncOverlayToCanvas();
+
+      // Observe layout changes to keep overlay aligned (in case fonts/layout shift)
+      const ro = new ResizeObserver(syncOverlayToCanvas);
+      ro.observe(board);
+      ro.observe(canvas);
     })();
   </script>
 </body>
