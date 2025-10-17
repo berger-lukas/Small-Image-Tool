@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Image Tool — Dark (Color + Rotate + Fixed Crop Overlay + Unified Brush/Delete)</title>
+  <title>Image Tool — Dark (Global Drag & Drop)</title>
   <style>
     :root {
       --bg: #0b0f16;
@@ -42,6 +42,12 @@
     .inline-row input[type="number"]{ width:90px; }
     .seg { display:flex; gap:6px; }
     .seg .btn { padding:6px 10px; }
+
+    /* Global window drag & drop mask */
+    .drop-mask { position: fixed; inset: 0; display: none; place-items: center; background: rgba(13,19,33,.55); border: 2px dashed var(--accent); border-radius: 16px; z-index: 9999; backdrop-filter: blur(2px); }
+    .drop-mask.active { display: grid; }
+    .drop-mask h2 { margin: 0; font-weight: 800; letter-spacing: .3px; }
+    .drop-mask p { margin: 6px 0 0 0; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -61,7 +67,7 @@
 
       <div class="checkerboard" id="board">
         <canvas id="canvas"></canvas>
-        <div id="placeholder" class="hint">No image yet — choose a file on the right.</div>
+        <div id="placeholder" class="hint">No image yet — choose a file on the right or drag & drop anywhere.</div>
         <svg class="overlay" id="overlay" preserveAspectRatio="none"></svg>
       </div>
 
@@ -159,6 +165,14 @@
     </div>
   </div>
 
+  <!-- Full-window drop mask -->
+  <div id="dropMask" class="drop-mask" aria-hidden="true">
+    <div style="text-align:center">
+      <h2>Drop image to load</h2>
+      <p>PNG • JPG • WebP • GIF</p>
+    </div>
+  </div>
+
   <script>
     (function(){
       // DOM
@@ -172,6 +186,7 @@
       const btnReset = document.getElementById('btnReset');
       const btnUndo = document.getElementById('btnUndo');
       const btnRedo = document.getElementById('btnRedo');
+      const dropMask = document.getElementById('dropMask');
 
       // Tools & panels
       const toolColor  = document.getElementById('toolColor');
@@ -545,20 +560,32 @@
         selRect = null; overlay.innerHTML = ''; btnApplyDelete.disabled = true;
       }
 
-      // Events
-      fileInput.addEventListener('change', (e)=>{
-        const file = e.target.files && e.target.files[0]; if (!file) return;
+      // --------- File loading helper (used by input, drop, paste) ---------
+      function loadImageFile(file) {
+        if (!file) return;
+        if (!file.type || !file.type.startsWith('image/')) { alert('Please use an image file.'); return; }
+
         try { if (srcURL) URL.revokeObjectURL(srcURL); } catch {}
-        srcURL = URL.createObjectURL(file); img = new Image();
-        img.onload = ()=>{
+        const url = URL.createObjectURL(file);
+        const next = new Image();
+        next.onload = () => {
+          img = next; srcURL = url;
           history.length = 0; future.length = 0; updateHistoryButtons();
           previewActive = false; lastPreview = null;
           drawBaseFromImage();
           baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
           enableUI(true);
+          overlay.innerHTML = ''; selRect = null; btnApplyCrop.disabled = true; btnApplyDelete.disabled = true;
+          syncOverlayToCanvas();
         };
-        img.onerror = ()=> alert('Could not load the image.');
-        img.src = srcURL;
+        next.onerror = () => { URL.revokeObjectURL(url); alert('Could not load the image.'); };
+        next.src = url;
+      }
+
+      // Events
+      fileInput.addEventListener('change', (e)=>{
+        const file = e.target.files && e.target.files[0]; if (!file) return;
+        loadImageFile(file);
       });
 
       // Tool buttons
@@ -688,6 +715,50 @@
       const ro = new ResizeObserver(syncOverlayToCanvas);
       ro.observe(board);
       ro.observe(canvas);
+
+      // ===================== GLOBAL DRAG & DROP =====================
+      // Use a drag counter to avoid flicker when dragging over children
+      let dragCounter = 0;
+
+      function showDropMask(){ dropMask.classList.add('active'); }
+      function hideDropMask(){ dropMask.classList.remove('active'); }
+
+      ['dragenter'].forEach(type => {
+        window.addEventListener(type, (e)=>{
+          e.preventDefault();
+          dragCounter++;
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+          showDropMask();
+        });
+      });
+
+      ['dragover'].forEach(type => {
+        window.addEventListener(type, (e)=>{
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        });
+      });
+
+      ['dragleave'].forEach(type => {
+        window.addEventListener(type, (e)=>{
+          e.preventDefault();
+          dragCounter = Math.max(0, dragCounter - 1);
+          if (dragCounter === 0) hideDropMask();
+        });
+      });
+
+      window.addEventListener('drop', (e)=>{
+        e.preventDefault();
+        dragCounter = 0; hideDropMask();
+        const files = e.dataTransfer?.files;
+        if (files && files.length) loadImageFile(files[0]);
+      });
+
+      // Optional: paste-to-import (handy for screenshots)
+      window.addEventListener('paste', (e)=>{
+        const file = [...(e.clipboardData?.files || [])][0];
+        if (file) loadImageFile(file);
+      });
     })();
   </script>
 </body>
