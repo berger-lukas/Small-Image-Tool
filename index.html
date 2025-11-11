@@ -34,7 +34,6 @@
     .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
     .checkerboard { position: relative; background-image: linear-gradient(45deg, #101726 25%, transparent 25%), linear-gradient(-45deg, #101726 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #101726 75%), linear-gradient(-45deg, transparent 75%, #101726 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; border-radius: 16px; border: 1px solid var(--ring); overflow: hidden; min-height: 240px; display: grid; place-items: center; }
     canvas { display: block; max-width: 100%; height: auto; cursor: crosshair; }
-    /* Overlay will be positioned/sized to match the canvas box exactly */
     .overlay { position: absolute; pointer-events: none; }
     .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
     .kbd { padding: 2px 6px; border: 1px solid var(--ring); border-bottom-width: 3px; border-radius: 6px; font-size: 11px; color: var(--text); }
@@ -43,7 +42,6 @@
     .seg { display:flex; gap:6px; }
     .seg .btn { padding:6px 10px; }
 
-    /* Global window drag & drop mask */
     .drop-mask { position: fixed; inset: 0; display: none; place-items: center; background: rgba(13,19,33,.55); border: 2px dashed var(--accent); border-radius: 16px; z-index: 9999; backdrop-filter: blur(2px); }
     .drop-mask.active { display: grid; }
     .drop-mask h2 { margin: 0; font-weight: 800; letter-spacing: .3px; }
@@ -56,6 +54,8 @@
     <div class="card">
       <div class="toolbar" role="toolbar" aria-label="Tools">
         <button class="btn" id="toolColor" aria-pressed="true">Color Remover</button>
+        <button class="btn" id="toolReplace" aria-pressed="false">Replace Color</button>
+        <button class="btn" id="toolNegative" aria-pressed="false">Negative</button>
         <button class="btn" id="toolBrush" aria-pressed="false">Brush / Delete</button>
         <button class="btn" id="toolCrop" aria-pressed="false">Crop</button>
         <button class="btn" id="toolRotate" aria-pressed="false">Rotate</button>
@@ -72,7 +72,7 @@
       </div>
 
       <div class="hint">
-        Color removal & rotation are non-destructive until <b>Apply</b>. Hold <span class="kbd">Space</span> to temporarily toggle Erase/Restore while brushing.
+        Color removal, replacement, and rotation are non-destructive until <b>Apply</b>. Hold <span class="kbd">Space</span> to temporarily toggle Erase/Restore while brushing.
       </div>
     </div>
 
@@ -83,7 +83,7 @@
           <input type="file" id="file" accept="image/*" />
         </div>
 
-        <!-- Color panel -->
+        <!-- Color remover panel -->
         <div id="panelColor">
           <label for="colorPicker">Target color</label>
           <div class="row">
@@ -107,6 +107,50 @@
               <button class="btn btn-danger" id="btnCancel" disabled>Cancel</button>
             </div>
           </div>
+        </div>
+
+        <!-- Replace Color panel -->
+        <div id="panelReplace" style="display:none">
+          <label for="srcColorPicker">Source color</label>
+          <div class="row">
+            <input type="color" id="srcColorPicker" value="#ffffff" />
+            <span id="srcColorHex" class="value">#FFFFFF</span>
+          </div>
+          <label for="dstColorPicker">Replace with</label>
+          <div class="row">
+            <input type="color" id="dstColorPicker" value="#60a5fa" />
+            <span id="dstColorHex" class="value">#60A5FA</span>
+          </div>
+          <label for="replaceThreshold">Threshold</label>
+          <div class="row">
+            <input type="range" id="replaceThreshold" min="0" max="150" value="50" />
+            <span id="replaceThresholdVal" class="value">50</span>
+          </div>
+          <label for="replaceFeather">Feather</label>
+          <div class="row">
+            <input type="range" id="replaceFeather" min="0" max="150" value="40" />
+            <span id="replaceFeatherVal" class="value">40</span>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnPreviewReplace" disabled>Preview</button>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-accent" id="btnApplyReplace" disabled>Apply</button>
+              <button class="btn btn-danger" id="btnCancelReplace" disabled>Cancel</button>
+            </div>
+          </div>
+          <div class="hint">Pixels similar to the <b>Source color</b> within <b>Threshold</b> are smoothly shifted toward the <b>Replace with</b> color (softened by <b>Feather</b>).</div>
+        </div>
+
+        <!-- Negative panel -->
+        <div id="panelNegative" style="display:none">
+          <div class="row">
+            <button class="btn" id="btnPreviewNegative" disabled>Preview</button>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-accent" id="btnApplyNegative" disabled>Apply</button>
+              <button class="btn btn-danger" id="btnCancelNegative" disabled>Cancel</button>
+            </div>
+          </div>
+          <div class="hint">Creates a photographic negative (inverts RGB, keeps alpha).</div>
         </div>
 
         <!-- Brush / Delete panel -->
@@ -165,7 +209,6 @@
     </div>
   </div>
 
-  <!-- Full-window drop mask -->
   <div id="dropMask" class="drop-mask" aria-hidden="true">
     <div style="text-align:center">
       <h2>Drop image to load</h2>
@@ -189,15 +232,19 @@
       const dropMask = document.getElementById('dropMask');
 
       // Tools & panels
-      const toolColor  = document.getElementById('toolColor');
-      const toolBrush  = document.getElementById('toolBrush');
-      const toolCrop   = document.getElementById('toolCrop');
-      const toolRotate = document.getElementById('toolRotate');
+      const toolColor   = document.getElementById('toolColor');
+      const toolReplace = document.getElementById('toolReplace');
+      const toolNegative= document.getElementById('toolNegative');
+      const toolBrush   = document.getElementById('toolBrush');
+      const toolCrop    = document.getElementById('toolCrop');
+      const toolRotate  = document.getElementById('toolRotate');
 
-      const panelColor = document.getElementById('panelColor');
-      const panelBrush = document.getElementById('panelBrush');
-      const panelCrop  = document.getElementById('panelCrop');
-      const panelRotate= document.getElementById('panelRotate');
+      const panelColor   = document.getElementById('panelColor');
+      const panelReplace = document.getElementById('panelReplace');
+      const panelNegative= document.getElementById('panelNegative');
+      const panelBrush   = document.getElementById('panelBrush');
+      const panelCrop    = document.getElementById('panelCrop');
+      const panelRotate  = document.getElementById('panelRotate');
 
       const btnApplyCrop   = document.getElementById('btnApplyCrop');
       const btnApplyDelete = document.getElementById('btnApplyDelete');
@@ -209,7 +256,7 @@
       const brushControls  = document.getElementById('brushControls');
       const deleteControls = document.getElementById('deleteControls');
 
-      // Color panel
+      // Color remover panel
       const colorPicker = document.getElementById('colorPicker');
       const colorHex = document.getElementById('colorHex');
       const thresholdInput = document.getElementById('threshold');
@@ -219,6 +266,24 @@
       const btnPreview = document.getElementById('btnPreview');
       const btnApply = document.getElementById('btnApply');
       const btnCancel = document.getElementById('btnCancel');
+
+      // Replace color panel
+      const srcColorPicker = document.getElementById('srcColorPicker');
+      const dstColorPicker = document.getElementById('dstColorPicker');
+      const srcColorHex = document.getElementById('srcColorHex');
+      const dstColorHex = document.getElementById('dstColorHex');
+      const replaceThresholdInput = document.getElementById('replaceThreshold');
+      const replaceFeatherInput = document.getElementById('replaceFeather');
+      const replaceThresholdVal = document.getElementById('replaceThresholdVal');
+      const replaceFeatherVal = document.getElementById('replaceFeatherVal');
+      const btnPreviewReplace = document.getElementById('btnPreviewReplace');
+      const btnApplyReplace = document.getElementById('btnApplyReplace');
+      const btnCancelReplace = document.getElementById('btnCancelReplace');
+
+      // Negative panel
+      const btnPreviewNegative = document.getElementById('btnPreviewNegative');
+      const btnApplyNegative = document.getElementById('btnApplyNegative');
+      const btnCancelNegative = document.getElementById('btnCancelNegative');
 
       // Brush controls
       const brushSizeInput = document.getElementById('brushSize');
@@ -235,15 +300,21 @@
       let img = null;
       let srcURL = null;
       let baselineBuffer = null;
-      let targetColor = [255,255,255];
+      let targetColor = [255,255,255]; // remover target
       let threshold = 60;
       let feather = 40;
-      let tool = 'color';              // 'color' | 'brush' | 'crop' | 'rotate'
+
+      let replaceSrc = [255,255,255];
+      let replaceDst = [96,165,250];
+      let replaceThreshold = 50;
+      let replaceFeather = 40;
+
+      let tool = 'color';              // 'color' | 'replace' | 'negative' | 'brush' | 'crop' | 'rotate'
       let brushMode = 'erase';         // 'erase' | 'restore' | 'deleteRect'
       let isMouseDown = false;
       let spaceHeld = false;
 
-      // Selection state in CSS pixels (overlay-aligned)
+      // Selection state (overlay-aligned)
       let selRect = null;
       let draggingSel = false;
       let selStart = null;
@@ -298,9 +369,8 @@
         if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       }
 
-      // ---------- Overlay alignment FIX ----------
+      // ---------- Overlay alignment ----------
       function updateOverlayBounds() {
-        // position & size overlay to exactly match canvas’s CSS box
         const boardRect  = board.getBoundingClientRect();
         const canvasRect = canvas.getBoundingClientRect();
         const left = canvasRect.left - boardRect.left;
@@ -309,28 +379,29 @@
         overlay.style.top    = top + 'px';
         overlay.style.width  = canvasRect.width + 'px';
         overlay.style.height = canvasRect.height + 'px';
-        // sync viewBox to overlay’s rendered size
         const w = Math.max(1, Math.round(canvasRect.width));
         const h = Math.max(1, Math.round(canvasRect.height));
         overlay.setAttribute('viewBox', `0 0 ${w} ${h}`);
       }
-      function syncOverlayToCanvas() {
-        requestAnimationFrame(updateOverlayBounds);
-      }
+      function syncOverlayToCanvas() { requestAnimationFrame(updateOverlayBounds); }
       window.addEventListener('resize', syncOverlayToCanvas);
 
       function setTool(next) {
         tool = next;
-        [toolColor, toolBrush, toolCrop, toolRotate].forEach(el=>el.setAttribute('aria-pressed','false'));
-        if (tool==='color')  toolColor.setAttribute('aria-pressed','true');
-        if (tool==='brush')  toolBrush.setAttribute('aria-pressed','true');
-        if (tool==='crop')   toolCrop.setAttribute('aria-pressed','true');
-        if (tool==='rotate') toolRotate.setAttribute('aria-pressed','true');
+        [toolColor, toolReplace, toolNegative, toolBrush, toolCrop, toolRotate].forEach(el=>el.setAttribute('aria-pressed','false'));
+        if (tool==='color')   toolColor.setAttribute('aria-pressed','true');
+        if (tool==='replace') toolReplace.setAttribute('aria-pressed','true');
+        if (tool==='negative')toolNegative.setAttribute('aria-pressed','true');
+        if (tool==='brush')   toolBrush.setAttribute('aria-pressed','true');
+        if (tool==='crop')    toolCrop.setAttribute('aria-pressed','true');
+        if (tool==='rotate')  toolRotate.setAttribute('aria-pressed','true');
 
-        panelColor.style.display = tool==='color' ? '' : 'none';
-        panelBrush.style.display = tool==='brush' ? '' : 'none';
-        panelCrop.style.display  = tool==='crop'  ? '' : 'none';
-        panelRotate.style.display= tool==='rotate'? '' : 'none';
+        panelColor.style.display    = tool==='color'    ? '' : 'none';
+        panelReplace.style.display  = tool==='replace'  ? '' : 'none';
+        panelNegative.style.display = tool==='negative' ? '' : 'none';
+        panelBrush.style.display    = tool==='brush'    ? '' : 'none';
+        panelCrop.style.display     = tool==='crop'     ? '' : 'none';
+        panelRotate.style.display   = tool==='rotate'   ? '' : 'none';
 
         if (tool!=='crop' && !(tool==='brush' && brushMode==='deleteRect')) {
           overlay.innerHTML='';
@@ -338,7 +409,9 @@
           btnApplyCrop.disabled = true;
           btnApplyDelete.disabled = true;
         }
-        if (previewActive && tool!=='color' && tool!=='rotate') cancelPreview();
+        // Cancel preview when switching to tools that don't support it
+        const previewTools = new Set(['color','replace','negative','rotate']);
+        if (previewActive && !previewTools.has(tool)) cancelPreview();
         syncOverlayToCanvas();
       }
 
@@ -346,27 +419,16 @@
         btnDownload.disabled = !enabled;
         placeholder.style.display = enabled ? 'none' : 'grid';
         updateHistoryButtons();
+        // Enable preview buttons across panels when image is loaded
         btnPreview.disabled = !enabled;
-        // Color
-        btnApply.disabled = !previewActive;
-        btnCancel.disabled = !previewActive;
-        // Rotate
-        btnApplyRotate.disabled = !previewActive;
-        btnCancelRotate.disabled = !previewActive;
+        btnPreviewReplace.disabled = !enabled;
+        btnPreviewNegative.disabled = !enabled;
         syncOverlayToCanvas();
       }
 
-      function rgbToHex([r,g,b]) {
-        const toHex = (x) => x.toString(16).padStart(2, '0');
-        return ('#' + toHex(r) + toHex(g) + toHex(b)).toUpperCase();
-      }
-      function hexToRgb(hex) {
-        const v = hex.replace('#','');
-        return [parseInt(v.slice(0,2),16), parseInt(v.slice(2,4),16), parseInt(v.slice(4,6),16)];
-      }
-      function distance(r1,g1,b1,r2,g2,b2) {
-        const dr=r1-r2, dg=g1-g2, db=b1-b2; return Math.sqrt(dr*dr + dg*dg + db*db);
-      }
+      function rgbToHex([r,g,b]) { const toHex = (x) => x.toString(16).padStart(2, '0'); return ('#' + toHex(r) + toHex(g) + toHex(b)).toUpperCase(); }
+      function hexToRgb(hex) { const v = hex.replace('#',''); return [parseInt(v.slice(0,2),16), parseInt(v.slice(2,4),16), parseInt(v.slice(4,6),16)]; }
+      function distance(r1,g1,b1,r2,g2,b2) { const dr=r1-r2, dg=g1-g2, db=b1-b2; return Math.sqrt(dr*dr + dg*dg + db*db); }
 
       function drawBaseFromImage() {
         if (!img) return;
@@ -386,8 +448,11 @@
       function startPreview() {
         if (!baselineBuffer) return;
         previewActive = true;
-        btnApply.disabled = false; btnCancel.disabled = false;
-        btnApplyRotate.disabled = false; btnCancelRotate.disabled = false;
+        // enable per-panel apply/cancel
+        if (tool==='color') { btnApply.disabled=false; btnCancel.disabled=false; }
+        if (tool==='rotate') { btnApplyRotate.disabled=false; btnCancelRotate.disabled=false; }
+        if (tool==='replace') { btnApplyReplace.disabled=false; btnCancelReplace.disabled=false; }
+        if (tool==='negative') { btnApplyNegative.disabled=false; btnCancelNegative.disabled=false; }
       }
       function cancelPreview() {
         if (!previewActive) return;
@@ -395,9 +460,11 @@
         previewActive = false; lastPreview = null;
         btnApply.disabled = true; btnCancel.disabled = true;
         btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
+        btnApplyReplace.disabled = true; btnCancelReplace.disabled = true;
+        btnApplyNegative.disabled = true; btnCancelNegative.disabled = true;
       }
 
-      // ----- Color preview/apply -----
+      // ----- Color remover preview/apply -----
       function renderColorPreview() {
         if (!baselineBuffer) return;
         const w = baselineBuffer.width, h = baselineBuffer.height;
@@ -414,7 +481,7 @@
         ctx.putImageData(src, 0, 0);
         syncOverlayToCanvas();
       }
-      function applyPreview() {
+      function applyPreview() { // generic apply for lastPreview
         if (!previewActive || !lastPreview) return;
         pushHistory();
         ctx.putImageData(lastPreview, 0, 0);
@@ -422,66 +489,89 @@
         previewActive = false; lastPreview = null;
         btnApply.disabled = true; btnCancel.disabled = true;
         btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
+        btnApplyReplace.disabled = true; btnCancelReplace.disabled = true;
+        btnApplyNegative.disabled = true; btnCancelNegative.disabled = true;
+        syncOverlayToCanvas();
+      }
+
+      // ----- Replace color preview/apply -----
+      function renderReplacePreview(){
+        if (!baselineBuffer) return;
+        const w = baselineBuffer.width, h = baselineBuffer.height;
+        const src = cloneImageData(baselineBuffer);
+        const data = src.data;
+        const [sr,sg,sb] = replaceSrc; const [tr,tg,tb] = replaceDst;
+        const t = replaceThreshold, f = replaceFeather;
+        for (let i=0; i<data.length; i+=4) {
+          const r=data[i], g=data[i+1], b=data[i+2];
+          const d = distance(r,g,b,sr,sg,sb);
+          if (d<=t) {
+            const wgt = 1; // full replace
+            data[i]   = Math.round((1-wgt)*r + wgt*tr);
+            data[i+1] = Math.round((1-wgt)*g + wgt*tg);
+            data[i+2] = Math.round((1-wgt)*b + wgt*tb);
+          } else if (f>0 && d<=t+f) {
+            const wgt = 1 - (d - t)/f; // 1..0 feather
+            data[i]   = Math.round((1-wgt)*r + wgt*tr);
+            data[i+1] = Math.round((1-wgt)*g + wgt*tg);
+            data[i+2] = Math.round((1-wgt)*b + wgt*tb);
+          }
+        }
+        lastPreview = src;
+        resizeCanvasIfNeeded(w,h);
+        ctx.putImageData(src, 0, 0);
+        syncOverlayToCanvas();
+      }
+
+      // ----- Negative preview/apply -----
+      function renderNegativePreview(){
+        if (!baselineBuffer) return;
+        const w = baselineBuffer.width, h = baselineBuffer.height;
+        const src = cloneImageData(baselineBuffer);
+        const data = src.data;
+        for (let i=0; i<data.length; i+=4) {
+          data[i]   = 255 - data[i];
+          data[i+1] = 255 - data[i+1];
+          data[i+2] = 255 - data[i+2];
+          // alpha unchanged
+        }
+        lastPreview = src;
+        resizeCanvasIfNeeded(w,h);
+        ctx.putImageData(src, 0, 0);
         syncOverlayToCanvas();
       }
 
       // ----- Rotate preview/apply -----
       function degToRad(deg){ return (deg % 360) * Math.PI / 180; }
-      function rotatedDims(w, h, rad){
-        const cos = Math.abs(Math.cos(rad));
-        const sin = Math.abs(Math.sin(rad));
-        return { w: Math.ceil(w*cos + h*sin), h: Math.ceil(w*sin + h*cos) };
-      }
+      function rotatedDims(w, h, rad){ const cos = Math.abs(Math.cos(rad)); const sin = Math.abs(Math.sin(rad)); return { w: Math.ceil(w*cos + h*sin), h: Math.ceil(w*sin + h*cos) }; }
       function renderRotatePreview(angleDeg){
         if (!baselineBuffer) return;
         const rad = degToRad(angleDeg);
         const bw = baselineBuffer.width, bh = baselineBuffer.height;
         const { w: rw, h: rh } = rotatedDims(bw, bh, rad);
-
-        const off = document.createElement('canvas');
-        off.width = rw; off.height = rh;
-        const octx = off.getContext('2d');
-        octx.clearRect(0,0,rw,rh);
-        octx.translate(rw/2, rh/2);
-        octx.rotate(rad);
-        const tmp = document.createElement('canvas');
-        tmp.width = bw; tmp.height = bh;
+        const off = document.createElement('canvas'); off.width = rw; off.height = rh;
+        const octx = off.getContext('2d'); octx.clearRect(0,0,rw,rh);
+        octx.translate(rw/2, rh/2); octx.rotate(rad);
+        const tmp = document.createElement('canvas'); tmp.width = bw; tmp.height = bh;
         tmp.getContext('2d').putImageData(baselineBuffer, 0, 0);
         octx.drawImage(tmp, -bw/2, -bh/2);
-
-        resizeCanvasIfNeeded(rw, rh);
-        ctx.clearRect(0,0,rw,rh);
-        ctx.drawImage(off, 0, 0);
+        resizeCanvasIfNeeded(rw, rh); ctx.clearRect(0,0,rw,rh); ctx.drawImage(off, 0, 0);
         lastPreview = ctx.getImageData(0,0,rw,rh);
         syncOverlayToCanvas();
       }
-      function applyRotate(){
-        if (!previewActive || !lastPreview) return;
-        pushHistory();
-        resizeCanvasIfNeeded(lastPreview.width, lastPreview.height);
-        ctx.putImageData(lastPreview, 0, 0);
-        baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height);
-        previewActive = false; lastPreview = null;
-        btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
-        btnApply.disabled = true; btnCancel.disabled = true;
-        syncOverlayToCanvas();
-      }
+      function applyRotate(){ if (!previewActive || !lastPreview) return; pushHistory(); resizeCanvasIfNeeded(lastPreview.width, lastPreview.height); ctx.putImageData(lastPreview, 0, 0); baselineBuffer = ctx.getImageData(0,0,canvas.width,canvas.height); previewActive=false; lastPreview=null; btnApplyRotate.disabled=true; btnCancelRotate.disabled=true; btnApply.disabled=true; btnCancel.disabled=true; btnApplyReplace.disabled=true; btnCancelReplace.disabled=true; btnApplyNegative.disabled=true; btnCancelNegative.disabled=true; syncOverlayToCanvas(); }
 
       // ----- Brush & Delete -----
       function setBrushMode(mode){
-        brushMode = mode; // 'erase' | 'restore' | 'deleteRect'
+        brushMode = mode;
         [modeErase, modeRestore, modeDelete].forEach(b=>b.setAttribute('aria-pressed','false'));
         if (mode==='erase')   modeErase.setAttribute('aria-pressed','true');
         if (mode==='restore') modeRestore.setAttribute('aria-pressed','true');
         if (mode==='deleteRect') modeDelete.setAttribute('aria-pressed','true');
-
         const isDelete = mode==='deleteRect';
         brushControls.style.display = isDelete ? 'none' : '';
         deleteControls.style.display = isDelete ? '' : 'none';
-
-        if (!isDelete) {
-          overlay.innerHTML=''; selRect=null; btnApplyDelete.disabled=true;
-        }
+        if (!isDelete) { overlay.innerHTML=''; selRect=null; btnApplyDelete.disabled=true; }
         syncOverlayToCanvas();
       }
 
@@ -494,50 +584,24 @@
         if (sizeW<=0 || sizeH<=0) return;
         const region = ctx.getImageData(minX, minY, sizeW, sizeH);
         const data = region.data;
-        let srcData = null;
-        if (mode==='restore' && baselineBuffer) srcData = baselineBuffer.data;
+        let srcData = null; if (mode==='restore' && baselineBuffer) srcData = baselineBuffer.data;
         for (let j=0; j<region.height; j++) for (let i=0; i<region.width; i++) {
           const dx = i + minX - x + 0.5, dy = j + minY - y + 0.5;
           if (dx*dx + dy*dy <= r*r) {
             const idx = (j*region.width + i) * 4;
             if (mode==='erase') data[idx+3] = 0;
-            else if (mode==='restore' && srcData) {
-              const gx = i + minX, gy = j + minY, gidx = (gy*w + gx) * 4;
-              data[idx] = srcData[gidx]; data[idx+1] = srcData[gidx+1]; data[idx+2] = srcData[gidx+2]; data[idx+3] = srcData[gidx+3];
-            }
+            else if (mode==='restore' && srcData) { const gx = i + minX, gy = j + minY, gidx = (gy*w + gx) * 4; data[idx] = srcData[gidx]; data[idx+1] = srcData[gidx+1]; data[idx+2] = srcData[gidx+2]; data[idx+3] = srcData[gidx+3]; }
           }
         }
         ctx.putImageData(region, minX, minY);
       }
 
-      // Selection overlay (overlay coords == canvas CSS box)
-      function drawSelectionOverlay() {
-        overlay.innerHTML = ''; if (!selRect) return;
-        const {x,y,w,h} = selRect; const svgNS = 'http://www.w3.org/2000/svg';
-        const ow = overlay.clientWidth || 1, oh = overlay.clientHeight || 1;
-        overlay.setAttribute('viewBox', `0 0 ${ow} ${oh}`);
-        const rect = document.createElementNS(svgNS, 'rect');
-        rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', w); rect.setAttribute('height', h);
-        rect.setAttribute('fill', 'rgba(96,165,250,0.12)'); rect.setAttribute('stroke', 'rgba(96,165,250,0.9)'); rect.setAttribute('stroke-width', '2');
-        overlay.appendChild(rect);
-      }
-      function clientToCanvas(evt) {
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
-        return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY, rect };
-      }
-      function selectionCssToCanvas(sel) {
-        // Convert overlay/CSS rect -> canvas pixels
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
-        const sx = Math.max(0, Math.round(sel.x * scaleX));
-        const sy = Math.max(0, Math.round(sel.y * scaleY));
-        const sw = Math.min(canvas.width - sx, Math.round(sel.w * scaleX));
-        const sh = Math.min(canvas.height - sy, Math.round(sel.h * scaleY));
-        return { sx, sy, sw, sh };
-      }
+      // Selection overlay
+      function drawSelectionOverlay() { overlay.innerHTML = ''; if (!selRect) return; const {x,y,w,h} = selRect; const svgNS = 'http://www.w3.org/2000/svg'; const ow = overlay.clientWidth || 1, oh = overlay.clientHeight || 1; overlay.setAttribute('viewBox', `0 0 ${ow} ${oh}`); const rect = document.createElementNS(svgNS, 'rect'); rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', w); rect.setAttribute('height', h); rect.setAttribute('fill', 'rgba(96,165,250,0.12)'); rect.setAttribute('stroke', 'rgba(96,165,250,0.9)'); rect.setAttribute('stroke-width', '2'); overlay.appendChild(rect); }
+      function clientToCanvas(evt) { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height; return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY, rect }; }
+      function selectionCssToCanvas(sel) { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height; const sx = Math.max(0, Math.round(sel.x * scaleX)); const sy = Math.max(0, Math.round(sel.y * scaleY)); const sw = Math.min(canvas.width - sx, Math.round(sel.w * scaleX)); const sh = Math.min(canvas.height - sy, Math.round(sel.h * scaleY)); return { sx, sy, sw, sh }; }
 
-      // ----- Crop/Delete actions -----
+      // Crop/Delete actions
       function applyCrop() {
         if (!selRect) return; if (previewActive) cancelPreview();
         const { sx, sy, sw, sh } = selectionCssToCanvas(selRect);
@@ -560,11 +624,9 @@
         selRect = null; overlay.innerHTML = ''; btnApplyDelete.disabled = true;
       }
 
-      // --------- File loading helper (used by input, drop, paste) ---------
+      // --------- File loading helper ---------
       function loadImageFile(file) {
-        if (!file) return;
-        if (!file.type || !file.type.startsWith('image/')) { alert('Please use an image file.'); return; }
-
+        if (!file) return; if (!file.type || !file.type.startsWith('image/')) { alert('Please use an image file.'); return; }
         try { if (srcURL) URL.revokeObjectURL(srcURL); } catch {}
         const url = URL.createObjectURL(file);
         const next = new Image();
@@ -583,16 +645,15 @@
       }
 
       // Events
-      fileInput.addEventListener('change', (e)=>{
-        const file = e.target.files && e.target.files[0]; if (!file) return;
-        loadImageFile(file);
-      });
+      fileInput.addEventListener('change', (e)=>{ const file = e.target.files && e.target.files[0]; if (!file) return; loadImageFile(file); });
 
       // Tool buttons
-      toolColor.addEventListener('click', ()=> setTool('color'));
-      toolBrush.addEventListener('click', ()=> setTool('brush'));
-      toolCrop.addEventListener('click',  ()=> setTool('crop'));
-      toolRotate.addEventListener('click',()=> setTool('rotate'));
+      toolColor.addEventListener('click',   ()=> setTool('color'));
+      toolReplace.addEventListener('click', ()=> setTool('replace'));
+      toolNegative.addEventListener('click',()=> setTool('negative'));
+      toolBrush.addEventListener('click',   ()=> setTool('brush'));
+      toolCrop.addEventListener('click',    ()=> setTool('crop'));
+      toolRotate.addEventListener('click',  ()=> setTool('rotate'));
 
       btnApplyCrop.addEventListener('click', applyCrop);
       btnApplyDelete.addEventListener('click', applyDeleteRect);
@@ -610,9 +671,15 @@
           const pixel = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
           targetColor = [pixel[0], pixel[1], pixel[2]]; colorPicker.value = rgbToHex(targetColor); colorHex.textContent = colorPicker.value;
           startPreview(); renderColorPreview();
+        } else if (tool==='replace') {
+          const pixel = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+          replaceSrc = [pixel[0], pixel[1], pixel[2]]; srcColorPicker.value = rgbToHex(replaceSrc); srcColorHex.textContent = srcColorPicker.value;
+          startPreview(); renderReplacePreview();
+        } else if (tool==='negative') {
+          startPreview(); renderNegativePreview();
         } else if (tool==='brush' && (brushMode==='erase' || brushMode==='restore')) {
           if (previewActive) cancelPreview();
-          pushHistory(); // snapshot at stroke start
+          pushHistory();
           const mode = brushMode==='erase' ? (spaceHeld ? 'restore' : 'erase') : 'restore';
           applyBrush(x, y, mode);
         } else if ((tool==='crop') || (tool==='brush' && brushMode==='deleteRect')) {
@@ -653,7 +720,7 @@
       });
       window.addEventListener('keyup', (e)=>{ if (e.code === 'Space') spaceHeld = false; });
 
-      // Color UI
+      // Color remover UI
       function updateColorPreview(){ if (tool==='color') { startPreview(); renderColorPreview(); } }
       colorPicker.addEventListener('input', (e)=>{ targetColor = hexToRgb(e.target.value); colorHex.textContent = e.target.value.toUpperCase(); updateColorPreview(); });
       thresholdInput.addEventListener('input', (e)=>{ threshold = +e.target.value||0; thresholdVal.textContent = String(threshold); updateColorPreview(); });
@@ -662,28 +729,28 @@
       btnApply.addEventListener('click',  ()=>{ if (tool==='color') { applyPreview(); } });
       btnCancel.addEventListener('click', ()=>{ if (tool==='color') { cancelPreview(); } });
 
+      // Replace color UI
+      function updateReplacePreview(){ if (tool==='replace') { startPreview(); renderReplacePreview(); } }
+      srcColorPicker.addEventListener('input', (e)=>{ replaceSrc = hexToRgb(e.target.value); srcColorHex.textContent = e.target.value.toUpperCase(); updateReplacePreview(); });
+      dstColorPicker.addEventListener('input', (e)=>{ replaceDst = hexToRgb(e.target.value); dstColorHex.textContent = e.target.value.toUpperCase(); updateReplacePreview(); });
+      replaceThresholdInput.addEventListener('input', (e)=>{ replaceThreshold = +e.target.value||0; replaceThresholdVal.textContent = String(replaceThreshold); updateReplacePreview(); });
+      replaceFeatherInput.addEventListener('input', (e)=>{ replaceFeather = +e.target.value||0; replaceFeatherVal.textContent = String(replaceFeather); updateReplacePreview(); });
+      btnPreviewReplace.addEventListener('click', ()=>{ if (tool==='replace') { startPreview(); renderReplacePreview(); } });
+      btnApplyReplace.addEventListener('click', ()=>{ if (tool==='replace') applyPreview(); });
+      btnCancelReplace.addEventListener('click', ()=>{ if (tool==='replace') cancelPreview(); });
+
+      // Negative UI
+      btnPreviewNegative.addEventListener('click', ()=>{ if (tool==='negative') { startPreview(); renderNegativePreview(); } });
+      btnApplyNegative.addEventListener('click', ()=>{ if (tool==='negative') applyPreview(); });
+      btnCancelNegative.addEventListener('click', ()=>{ if (tool==='negative') cancelPreview(); });
+
       // Brush UI
       brushSizeInput?.addEventListener('input', (e)=>{ brushVal.textContent = e.target.value + ' px'; });
 
       // Rotate UI
-      function syncRotateInputs(val){
-        const clamped = Math.max(0, Math.min(360, Number(val)||0));
-        rotateRange.value = clamped;
-        rotateNumber.value = clamped;
-        rotateVal.textContent = clamped.toFixed(1) + '°';
-      }
-      rotateRange.addEventListener('input', (e)=>{
-        if (!img) return;
-        const v = Number(e.target.value)||0;
-        syncRotateInputs(v);
-        if (tool==='rotate') { startPreview(); renderRotatePreview(v); }
-      });
-      rotateNumber.addEventListener('input', (e)=>{
-        if (!img) return;
-        const v = Number(e.target.value)||0;
-        syncRotateInputs(v);
-        if (tool==='rotate') { startPreview(); renderRotatePreview(v); }
-      });
+      function syncRotateInputs(val){ const clamped = Math.max(0, Math.min(360, Number(val)||0)); rotateRange.value = clamped; rotateNumber.value = clamped; rotateVal.textContent = clamped.toFixed(1) + '°'; }
+      rotateRange.addEventListener('input', (e)=>{ if (!img) return; const v = Number(e.target.value)||0; syncRotateInputs(v); if (tool==='rotate') { startPreview(); renderRotatePreview(v); } });
+      rotateNumber.addEventListener('input', (e)=>{ if (!img) return; const v = Number(e.target.value)||0; syncRotateInputs(v); if (tool==='rotate') { startPreview(); renderRotatePreview(v); } });
       btnApplyRotate.addEventListener('click', ()=>{ if (tool==='rotate') applyRotate(); });
       btnCancelRotate.addEventListener('click', ()=>{ if (tool==='rotate') cancelPreview(); });
 
@@ -701,6 +768,11 @@
         overlay.innerHTML = ''; selRect = null; btnApplyCrop.disabled = true; btnApplyDelete.disabled = true;
         syncRotateInputs(0);
         setBrushMode('erase');
+        // disable per-panel apply buttons
+        btnApply.disabled = true; btnCancel.disabled = true;
+        btnApplyRotate.disabled = true; btnCancelRotate.disabled = true;
+        btnApplyReplace.disabled = true; btnCancelReplace.disabled = true;
+        btnApplyNegative.disabled = true; btnCancelNegative.disabled = true;
       });
       btnDownload.addEventListener('click', ()=>{ if (!img) return; const a=document.createElement('a'); a.download='edited.png'; a.href=canvas.toDataURL('image/png'); a.click(); });
 
@@ -711,54 +783,19 @@
       enableUI(false);
       syncOverlayToCanvas();
 
-      // Observe layout changes to keep overlay aligned (in case fonts/layout shift)
+      // Keep overlay aligned
       const ro = new ResizeObserver(syncOverlayToCanvas);
-      ro.observe(board);
-      ro.observe(canvas);
+      ro.observe(board); ro.observe(canvas);
 
       // ===================== GLOBAL DRAG & DROP =====================
-      // Use a drag counter to avoid flicker when dragging over children
       let dragCounter = 0;
-
       function showDropMask(){ dropMask.classList.add('active'); }
       function hideDropMask(){ dropMask.classList.remove('active'); }
-
-      ['dragenter'].forEach(type => {
-        window.addEventListener(type, (e)=>{
-          e.preventDefault();
-          dragCounter++;
-          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-          showDropMask();
-        });
-      });
-
-      ['dragover'].forEach(type => {
-        window.addEventListener(type, (e)=>{
-          e.preventDefault();
-          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-        });
-      });
-
-      ['dragleave'].forEach(type => {
-        window.addEventListener(type, (e)=>{
-          e.preventDefault();
-          dragCounter = Math.max(0, dragCounter - 1);
-          if (dragCounter === 0) hideDropMask();
-        });
-      });
-
-      window.addEventListener('drop', (e)=>{
-        e.preventDefault();
-        dragCounter = 0; hideDropMask();
-        const files = e.dataTransfer?.files;
-        if (files && files.length) loadImageFile(files[0]);
-      });
-
-      // Optional: paste-to-import (handy for screenshots)
-      window.addEventListener('paste', (e)=>{
-        const file = [...(e.clipboardData?.files || [])][0];
-        if (file) loadImageFile(file);
-      });
+      ['dragenter'].forEach(type => { window.addEventListener(type, (e)=>{ e.preventDefault(); dragCounter++; if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; showDropMask(); }); });
+      ['dragover'].forEach(type => { window.addEventListener(type, (e)=>{ e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }); });
+      ['dragleave'].forEach(type => { window.addEventListener(type, (e)=>{ e.preventDefault(); dragCounter = Math.max(0, dragCounter - 1); if (dragCounter === 0) hideDropMask(); }); });
+      window.addEventListener('drop', (e)=>{ e.preventDefault(); dragCounter = 0; hideDropMask(); const files = e.dataTransfer?.files; if (files && files.length) loadImageFile(files[0]); });
+      window.addEventListener('paste', (e)=>{ const file = [...(e.clipboardData?.files || [])][0]; if (file) loadImageFile(file); });
     })();
   </script>
 </body>
